@@ -22,8 +22,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MPLCONFIGDIR=/tmp/matplotlib
 
 WORKDIR /app
-COPY requirements.txt ./
-RUN pip install -r requirements.txt && pip check
+ARG REQUIREMENTS=requirements.txt
+COPY requirements.txt requirements-gpu.txt requirements-common.txt ./
+RUN pip install -r ${REQUIREMENTS} && pip check
 
 COPY setup.py ./
 COPY cotracker ./cotracker
