@@ -21,7 +21,7 @@
 Нужен только Docker (Docker Desktop на Windows/macOS или Docker Engine на Linux).
 
 ```bash
-git clone https://github.com/ironDiaper/co-tracker.git
+git clone https://github.com/IronDiaper/co-tracker.git
 cd co-tracker
 bash run.sh
 ```
@@ -29,7 +29,7 @@ bash run.sh
 На Windows то же самое в PowerShell:
 
 ```powershell
-git clone https://github.com/ironDiaper/co-tracker.git
+git clone https://github.com/IronDiaper/co-tracker.git
 cd co-tracker
 .\run.ps1
 ```
@@ -39,6 +39,46 @@ cd co-tracker
 около 3.5 минут. В конце печатается таблица с метриками и
 `TESTS DONE!`, а все видео и картинки лежат в `./results/tests/`. Повторный запуск
 пропускает сборку. Требования, замеры и решение проблем — в [TESTING.md](TESTING.md).
+
+### Своё видео
+
+Видео можно взять из любой папки: укажите путь к нему после `--demo`. Образ тот же,
+что и для тестов, отдельно ничего собирать не нужно. Видео подключается в контейнер
+только для чтения, сеть по-прежнему отключена.
+
+```bash
+bash run.sh --demo ~/Videos/my_video.mp4
+```
+
+```powershell
+.\run.ps1 --demo "C:\Users\me\Videos\my_video.mp4"
+```
+
+Результат появится в `results/demo/my_video/`:
+
+| Файл | Что внутри |
+|---|---|
+| `tracks.mp4` | видео с нарисованными треками |
+| `preview.gif` | уменьшенное GIF-превью |
+| `summary.png` | первый кадр с точками и последний кадр с траекториями |
+| `tracks.npy`, `visibility.npy` | координаты точек `[T, N, 2]` и их видимость `[T, N]` |
+| `summary.json` | число точек и кадров, доля видимых точек, время инференса |
+
+Параметры демо пишутся после `--` (в PowerShell `--` можно не писать):
+
+```bash
+bash run.sh --demo ~/Videos/my_video.mp4 -- --grid_size 15 --max_frames 60 --resize 480
+```
+
+- `--grid_size` — сетка G×G точек на первом кадре (по умолчанию 10);
+- `--max_frames` — взять только первые N кадров. Модель обрабатывает ролик целиком за
+  один проход, поэтому время и память растут с числом кадров: 50 кадров 720p — около
+  20 секунд и 2.3 ГБ памяти на 4 ядрах. Длинные ролики лучше ограничивать 60–100 кадрами;
+- `--resize` — высота кадра в пикселях: уменьшает файлы результатов, на скорость почти
+  не влияет.
+
+Проверены форматы mp4, mov, avi, mkv и webm, в том числе пути с пробелами (путь
+тогда нужно взять в кавычки).
 
 ## Что происходит при запуске
 
