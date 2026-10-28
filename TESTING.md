@@ -3,7 +3,7 @@
 ## Кратко
 
 ```bash
-git clone https://github.com/ironDiaper/co-tracker.git
+git clone https://github.com/IronDiaper/co-tracker.git
 cd co-tracker
 bash run.sh            # Windows PowerShell: .\run.ps1
 ```
