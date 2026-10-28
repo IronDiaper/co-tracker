@@ -42,6 +42,7 @@ COPY requirements-test.txt ./
 RUN pip install -r requirements-test.txt && pip check
 COPY pytest.ini ./
 COPY tests ./tests
+COPY reference ./reference
 CMD ["python", "-m", "pytest"]
 
 FROM app AS runtime

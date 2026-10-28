@@ -1,0 +1,17 @@
+{
+  "video": "tests/data/apple.mp4",
+  "video_sha256": "c7f48c5cfb1479e1dbc1df2373d5cad4f55c198bbdb379da0ece10087971542a",
+  "checkpoint_sha256": "2670d4562ed69326dda775a26e54883925cd11b6fc9b24cb7aa9f8078bce7834",
+  "grid_size": 10,
+  "num_frames": 50,
+  "num_points": 100,
+  "frame_size": [
+    1296,
+    720
+  ],
+  "visible_fraction": 0.7546,
+  "torch_version": "2.4.1+cpu",
+  "torch_threads": 4,
+  "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
+  "created": "2026-10-28T03:02:31+00:00"
+}
