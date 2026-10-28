@@ -1,0 +1,16 @@
+*
+!setup.py
+!cotracker/
+!scripts/
+!tests/
+!reference/
+!checkpoints/
+!assets/apple.mp4
+!requirements.txt
+!requirements-gpu.txt
+!requirements-common.txt
+!requirements-test.txt
+!pytest.ini
+
+**/__pycache__
+**/*.pyc

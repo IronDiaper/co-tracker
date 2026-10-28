@@ -1,0 +1,6 @@
+__pycache__/
+*.egg-info/
+/results/
+/checkpoints/*
+!/checkpoints/README.md
+/saved_videos/
