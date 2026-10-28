@@ -1,360 +1,199 @@
-# CoTracker3: Simpler and Better Point Tracking by Pseudo-Labelling Real Videos
+# CoTracker3 в Docker: трекинг точек на видео
 
-**[Meta AI Research, GenAI](https://ai.facebook.com/research/)**; **[University of Oxford, VGG](https://www.robots.ox.ac.uk/~vgg/)**
+Лабораторная работа по курсу «Разработка систем глубокого обучения»: запуск и тесты
+нейросети **CoTracker3** упакованы в Docker так, чтобы их можно было проверить одной
+командой на обычном компьютере без GPU, а результаты (видео, GIF, картинки) появились
+в папке `./results`.
 
-[Nikita Karaev](https://nikitakaraevv.github.io/), [Iurii Makarov](https://linkedin.com/in/lvoursl), [Jianyuan Wang](https://jytime.github.io/), [Ignacio Rocco](https://www.irocco.info/), [Benjamin Graham](https://ai.facebook.com/people/benjamin-graham/), [Natalia Neverova](https://nneverova.github.io/), [Andrea Vedaldi](https://www.robots.ox.ac.uk/~vedaldi/), [Christian Rupprecht](https://chrirupp.github.io/)
+**CoTracker3** (Meta AI и Oxford VGG) — трансформер, который отслеживает произвольные
+точки на видео: для каждой точки, заданной на одном кадре, он предсказывает её
+координаты на всех кадрах и то, видна ли она (или закрыта другим объектом, или ушла
+из кадра). Точки отслеживаются совместно, поэтому модель держит трек и при окклюзиях.
 
-### [Project Page](https://cotracker3.github.io/) | [Paper #1](https://arxiv.org/abs/2307.07635) | [Paper #2](https://arxiv.org/abs/2410.11831) |  [X Thread](https://twitter.com/n_karaev/status/1742638906355470772) | [BibTeX](#citing-cotracker)
+- статья: [CoTracker3: Simpler and Better Point Tracking by Pseudo-Labelling Real Videos](https://arxiv.org/abs/2410.11831)
+- код авторов: [facebookresearch/co-tracker](https://github.com/facebookresearch/co-tracker), исходный README — в [README_ORIGINAL.md](README_ORIGINAL.md)
+- веса: [facebook/cotracker3](https://huggingface.co/facebook/cotracker3), используется `scaled_offline.pth`
 
-<a target="_blank" href="https://colab.research.google.com/github/facebookresearch/co-tracker/blob/main/notebooks/demo.ipynb">
-  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
-</a>
-<a href="https://huggingface.co/spaces/facebook/cotracker">
-  <img alt="Spaces" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue">
-</a>
+![Треки на apple.mp4](media/apple_tracks.gif)
 
-<img width="1100" src="./assets/teaser.png" />
+## Быстрый старт
 
-**CoTracker** is a fast transformer-based model that can track any point in a video. It brings to tracking some of the benefits of Optical Flow.
-
-CoTracker can track:
-
-- **Any pixel** in a video
-- A **quasi-dense** set of pixels together
-- Points can be manually selected or sampled on a grid in any video frame
-
-Try these tracking modes for yourself with our [Colab demo](https://colab.research.google.com/github/facebookresearch/co-tracker/blob/master/notebooks/demo.ipynb) or in the [Hugging Face Space 🤗](https://huggingface.co/spaces/facebook/cotracker).
-
-**Updates:**
-
-- [January 21, 2025] 📦 Kubric Dataset used for CoTracker3 now available! This dataset contains **6,000 high-resolution sequences** (512×512px, 120 frames) with slight camera motion, rendered using the Kubric engine. Check it out on [Hugging Face Dataset](https://huggingface.co/datasets/facebook/CoTracker3_Kubric).
-
-- [October 15, 2024] 📣 We're releasing CoTracker3! State-of-the-art point tracking with a lightweight architecture trained with 1000x less data than previous top-performing models. Code for baseline models and the pseudo-labeling pipeline are available in the repo, as well as model checkpoints. Check out our [paper](https://arxiv.org/abs/2410.11831) for more details.
-
-- [September 25, 2024]  CoTracker2.1 is now available! This model has better performance on TAP-Vid benchmarks and follows the architecture of the original CoTracker. Try it out!
-
-- [June 14, 2024]  We have released the code for [VGGSfM](https://github.com/facebookresearch/vggsfm), a model for recovering camera poses and 3D structure from any image sequences based on point tracking! VGGSfM is the first fully differentiable SfM framework that unlocks scalability and outperforms conventional SfM methods on standard benchmarks. 
-
-- [December 27, 2023]  CoTracker2 is now available! It can now track many more (up to **265*265**!) points jointly and it has a cleaner and more memory-efficient implementation. It also supports online processing. See the [updated paper](https://arxiv.org/abs/2307.07635) for more details. The old version remains available [here](https://github.com/facebookresearch/co-tracker/tree/8d364031971f6b3efec945dd15c468a183e58212).
-
-- [September 5, 2023] You can now run our Gradio demo [locally](./gradio_demo/app.py).
-
-## Quick start
-The easiest way to use CoTracker is to load a pretrained model from `torch.hub`:
-
-### Offline mode: 
-```pip install imageio[ffmpeg]```, then:
-```python
-import torch
-# Download the video
-url = 'https://github.com/facebookresearch/co-tracker/raw/refs/heads/main/assets/apple.mp4'
-
-import imageio.v3 as iio
-frames = iio.imread(url, plugin="FFMPEG")  # plugin="pyav"
-
-device = 'cuda'
-grid_size = 10
-video = torch.tensor(frames).permute(0, 3, 1, 2)[None].float().to(device)  # B T C H W
-
-# Run Offline CoTracker:
-cotracker = torch.hub.load("facebookresearch/co-tracker", "cotracker3_offline").to(device)
-pred_tracks, pred_visibility = cotracker(video, grid_size=grid_size) # B T N 2,  B T N 1
-```
-### Online mode: 
-```python
-cotracker = torch.hub.load("facebookresearch/co-tracker", "cotracker3_online").to(device)
-
-# Run Online CoTracker, the same model with a different API:
-# Initialize online processing
-cotracker(video_chunk=video, is_first_step=True, grid_size=grid_size)  
-
-# Process the video
-for ind in range(0, video.shape[1] - cotracker.step, cotracker.step):
-    pred_tracks, pred_visibility = cotracker(
-        video_chunk=video[:, ind : ind + cotracker.step * 2]
-    )  # B T N 2,  B T N 1
-```
-Online processing is more memory-efficient and allows for the processing of longer videos. However, in the example provided above, the video length is known! See [the online demo](./online_demo.py) for an example of tracking from an online stream with an unknown video length.
-
-### Visualize predicted tracks: 
-After [installing](#installation-instructions) CoTracker, you can visualize tracks with:
-```python
-from cotracker.utils.visualizer import Visualizer
-
-vis = Visualizer(save_dir="./saved_videos", pad_value=120, linewidth=3)
-vis.visualize(video, pred_tracks, pred_visibility)
-```
-
-We offer a number of other ways to interact with CoTracker:
-
-1. Interactive Gradio demo:
-   - A demo is available in the [`facebook/cotracker` Hugging Face Space 🤗](https://huggingface.co/spaces/facebook/cotracker).
-   - You can use the gradio demo locally by running [`python -m gradio_demo.app`](./gradio_demo/app.py) after installing the required packages: `pip install -r gradio_demo/requirements.txt`.
-2. Jupyter notebook:
-   - You can run the notebook in
-   [Google Colab](https://colab.research.google.com/github/facebookresearch/co-tracker/blob/master/notebooks/demo.ipynb).
-   - Or explore the notebook located at [`notebooks/demo.ipynb`](./notebooks/demo.ipynb). 
-2. You can [install](#installation-instructions) CoTracker _locally_ and then:
-   - Run an *offline* demo with 10 ⨉ 10 points sampled on a grid on the first frame of a video (results will be saved to `./saved_videos/demo.mp4`)):
-
-     ```bash
-     python demo.py --grid_size 10
-     ```
-    - Run an *online* demo:
-
-      ```bash
-      python online_demo.py
-      ```
-
-A GPU is strongly recommended for using CoTracker locally.
-
-<img width="500" src="./assets/bmx-bumps.gif" />
-
-
-## Installation Instructions
-You can use a Pretrained Model via PyTorch Hub, as described above, or install CoTracker from this GitHub repo.
-This is the best way if you need to run our local demo or evaluate/train CoTracker.
-
-Ensure you have both _PyTorch_ and _TorchVision_ installed on your system. Follow the instructions [here](https://pytorch.org/get-started/locally/) for the installation.
-We strongly recommend installing both PyTorch and TorchVision with CUDA support, although for small tasks CoTracker can be run on CPU.
-
-
-
-
-### Install a Development Version
+Нужен только Docker (Docker Desktop на Windows/macOS или Docker Engine на Linux).
 
 ```bash
-git clone https://github.com/facebookresearch/co-tracker
+git clone https://github.com/ironDiaper/co-tracker.git
 cd co-tracker
-pip install -e .
-pip install matplotlib flow_vis tqdm tensorboard
+bash run.sh
 ```
 
-You can manually download all CoTracker3 checkpoints (baseline and scaled models, as well as single and sliding window architectures) from the links below and place them in the `checkpoints` folder as follows:
+На Windows то же самое в PowerShell:
+
+```powershell
+git clone https://github.com/ironDiaper/co-tracker.git
+cd co-tracker
+.\run.ps1
+```
+
+Первый запуск собирает образ (около 3 минут, нужен интернет), затем запускает 13 тестов
+без сети (около 2 минут на 4 ядрах). В конце печатается таблица с метриками и
+`TESTS DONE!`, а все видео и картинки лежат в `./results/tests/`. Повторный запуск
+пропускает сборку. Требования, замеры и решение проблем — в [TESTING.md](TESTING.md).
+
+## Что происходит при запуске
+
+```
+bash run.sh
+ ├─ [1/3] сборка образа cotracker3:test, если его ещё нет
+ │        weights: скачать scaled_offline.pth, проверить sha256
+ │        base:    python 3.10 + PyTorch 2.4.1 (CPU) + зависимости + пакет cotracker
+ │        test:    + веса, скрипты, тестовые видео, pytest
+ ├─ [2/3] docker run --network none ... pytest   (13 тестов, результаты -> ./results)
+ └─ [3/3] список созданных файлов, время, TESTS DONE!
+```
+
+Модель загружается из локального пакета `cotracker` и чекпоинта внутри образа, без
+`torch.hub`, поэтому тесты работают с отключённой сетью (`--network none`).
+
+## Что проверяют тесты
+
+| Тест | Что проверяет | Результат на CPU |
+|---|---|---|
+| `test_model_load.py` | веса читаются из локального файла (sha256), сеть и `torch.hub` заблокированы | 188 тензоров совпадают с файлом |
+| `test_outputs.py` | формы `tracks [B,T,N,2]`, `visibility [B,T,N]`, конечные значения, видимые точки в кадре | OK |
+| `test_static_video` | один кадр, повторённый 24 раза: точки не должны смещаться | максимум 0.195 px (порог 1 px) |
+| `test_shift_accuracy` | текстура сдвигается на известные (dx, dy) за кадр — главный количественный тест | ошибка 0.09–0.12 px (порог 1 px) |
+| `test_occlusion` | квадрат закрывает часть кадра: закрытые точки становятся невидимыми и находятся снова | 100% закрытых точек скрыты |
+| `test_demo_on_real_video` | полный пайплайн на `apple.mp4`: mp4, GIF, PNG, npy, json; кадров в mp4 столько же, сколько во входе | 50 = 50 |
+| `test_procedural_video_accuracy` | сжатые H.264 ролики с известными треками | ошибка 0.16–0.21 px (порог 1.5 px) |
+| `test_matches_reference` | треки `apple.mp4` совпадают с эталоном из `reference/` | порог 0.5 px |
+| `test_author_bilinear_sampler` | исходный юнит-тест авторов | OK |
+
+## Примеры результатов
+
+Слева сетка точек на первом кадре, справа траектории за всё видео
+(`results/tests/e2e_apple/summary.png`):
+
+![Первый и последний кадр apple.mp4](media/apple_summary.png)
+
+Синтетический сдвиг на (3, 2) px за кадр: истинные траектории (зелёные) и предсказанные
+(красные), справа ошибка по кадрам (`results/tests/shift_dx3_dy2.png`):
+
+![Тест сдвига](media/shift_dx3_dy2.png)
+
+Окклюзия: точки под квадратом модель помечает невидимыми (красные контуры), после
+исчезновения квадрата находит их снова (`results/tests/occlusion.png`):
+
+![Тест окклюзии](media/occlusion.png)
+
+Процедурный ролик `shapes.mp4`: трек спрайта обрывается, пока он за тёмным столбом
+(`results/tests/e2e_shapes/gt_vs_pred.png`):
+
+![shapes.mp4](media/shapes_gt_vs_pred.png)
+
+## Флаги
+
+| `run.sh` / `run.ps1` | Что делает |
+|---|---|
+| *(без флагов)* | собрать образ, если его нет, и запустить все тесты |
+| `--demo <видео>` | демо на своём видео: результаты в `results/demo/<имя>/` |
+| `--rebuild` | пересобрать образ (после изменения кода или зависимостей) |
+| `--gpu` | собрать и запустить GPU-образ (`cotracker3-gpu:test`, `--gpus all`) |
+| `--make-reference` | пересоздать эталон `reference/` |
+| `-- <аргументы>` | передать аргументы pytest (или `run_demo.py` вместе с `--demo`) |
+
+Примеры:
 
 ```bash
-mkdir -p checkpoints
-cd checkpoints
-# download the online (multi window) model
-wget https://huggingface.co/facebook/cotracker3/resolve/main/scaled_online.pth
-# download the offline (single window) model
-wget https://huggingface.co/facebook/cotracker3/resolve/main/scaled_offline.pth
-cd ..
-```
-You can also download CoTracker3 checkpoints trained only on Kubric:
-```bash
-# download the online (sliding window) model
-wget https://huggingface.co/facebook/cotracker3/resolve/main/baseline_online.pth
-# download the offline (single window) model
-wget https://huggingface.co/facebook/cotracker3/resolve/main/baseline_offline.pth
-```
-For old checkpoints, see [this section](#previous-version).
-
-## Evaluation
-
-To reproduce the results presented in the paper, download the following datasets:
-
-- [TAP-Vid](https://github.com/deepmind/tapnet)
-- [Dynamic Replica](https://dynamic-stereo.github.io/)
-
-And install the necessary dependencies:
-
-```bash
-pip install hydra-core==1.1.0 mediapy
+bash run.sh --demo ~/Videos/dog.mp4 -- --grid_size 15 --max_frames 60 --resize 480
+bash run.sh -- -k shift          # только тесты сдвига
+bash run.sh --gpu                # то же на видеокарте NVIDIA
 ```
 
-Then, execute the following command to evaluate the online model on TAP-Vid DAVIS:
+В PowerShell флаги те же: `.\run.ps1 --demo C:\video.mp4 --grid_size 15`
+(разделитель `--` в PowerShell можно не писать).
 
-```bash
-python ./cotracker/evaluation/evaluate.py --config-name eval_tapvid_davis_first exp_dir=./eval_outputs dataset_root=your/tapvid/path
-```
-And the offline model:
-```bash
-python ./cotracker/evaluation/evaluate.py --config-name eval_tapvid_davis_first exp_dir=./eval_outputs dataset_root=/fsx-repligen/shared/datasets/tapvid offline_model=True window_len=60 checkpoint=./checkpoints/scaled_offline.pth
-```
-We run evaluations jointly on all the target points at a time for faster inference. With such evaluations, the numbers are similar to those presented in the paper. If you want to reproduce the exact numbers from the paper, add the flag `single_point=True`. 
+Параметры `scripts/run_demo.py`:
 
-These are the numbers that you should be able to reproduce using the released checkpoint and the current version of the codebase:
-|  | Kinetics, $\delta_\text{avg}^\text{vis}$ | DAVIS, $\delta_\text{avg}^\text{vis}$ |  RoboTAP, $\delta_\text{avg}^\text{vis}$ | RGB-S, $\delta_\text{avg}^\text{vis}$| 
-| :---: |:---: | :---: | :---: | :---: |
-| CoTracker2, 27.12.23 | 61.8 | 74.6 | 69.6 | 73.4 | 
-| CoTracker2.1, 25.09.24 | 63 | 76.1 | 70.6 | 79.6 | 
-| CoTracker3 offline, 15.10.24 | 67.8 | **76.9** | 78.0 | **85.0** | 
-| CoTracker3 online, 15.10.24 | **68.3** | 76.7 | **78.8** | 82.7  | 
+| Параметр | По умолчанию | Что задаёт |
+|---|---|---|
+| `--video` | `assets/apple.mp4` | входное видео |
+| `--grid_size` | 10 | сетка G×G точек на первом кадре |
+| `--max_frames` | 0 (все) | взять только первые N кадров |
+| `--resize` | 0 (без изменения) | высота кадра в пикселях, ширина по пропорции |
+| `--trace` | 15 | длина «хвоста» трека в mp4 и GIF, кадров |
+| `--device` | `auto` | `cpu`, `cuda` или автовыбор |
+| `--fmaps_chunk` | 8 | кадров за проход энкодера признаков (меньше — меньше памяти) |
 
+Результат демо: `tracks.mp4` (видео с треками), `preview.gif`, `summary.png`
+(первый кадр с точками | последний кадр с траекториями), `tracks.npy` `[T, N, 2]`,
+`visibility.npy` `[T, N]`, `summary.json` (число точек и кадров, доля видимых точек,
+время инференса, пиковая память).
 
-## Training
-
-### Baseline
-To train the CoTracker as described in our paper, you first need to generate annotations for [Google Kubric](https://github.com/google-research/kubric) MOVI-f dataset.
-Instructions for annotation generation can be found [here](https://github.com/deepmind/tapnet).
-You can also find a discussion on dataset generation in [this issue](https://github.com/facebookresearch/co-tracker/issues/8).
-
-Once you have the annotated dataset, you need to make sure you followed the steps for evaluation setup and install the training dependencies:
-
-```bash
-pip install pip==24.0
-pip install pytorch_lightning==1.6.0 tensorboard opencv-python
-```
-
-Now you can launch training on Kubric.
-Our model was trained for 50000 iterations on 32 GPUs (4 nodes with 8 GPUs). 
-Modify _dataset_root_ and _ckpt_path_ accordingly before running this command. For training on 4 nodes, add `--num_nodes 4`. 
-
-Here is an example of how to launch training of the online model on Kubric:
-```bash
- python train_on_kubric.py --batch_size 1 --num_steps 50000 \
- --ckpt_path ./ --model_name cotracker_three --save_freq 200 --sequence_len 64 \
-  --eval_datasets tapvid_davis_first tapvid_stacking --traj_per_sample 384 \
-  --sliding_window_len 16 --train_datasets kubric --save_every_n_epoch 5 \
-  --evaluate_every_n_epoch 5 --model_stride 4 --dataset_root ${path_to_your_dataset} \
-   --num_nodes 4 --num_virtual_tracks 64 --mixed_precision --corr_radius 3 \ 
-   --wdecay 0.0005 --linear_layer_for_vis_conf --validate_at_start --add_huber_loss
-```
-
-Training the offline model on Kubric:
-```bash
-python train_on_kubric.py --batch_size 1 --num_steps 50000 \
- --ckpt_path ./ --model_name cotracker_three --save_freq 200 --sequence_len 60 \
- --eval_datasets tapvid_davis_first tapvid_stacking --traj_per_sample 512 \
- --sliding_window_len 60 --train_datasets kubric --save_every_n_epoch 5 \
- --evaluate_every_n_epoch 5 --model_stride 4 --dataset_root ${path_to_your_dataset} \
- --num_nodes 4 --num_virtual_tracks 64 --mixed_precision --offline_model \
- --random_frame_rate --query_sampling_method random --corr_radius 3 \
- --wdecay 0.0005 --random_seq_len --linear_layer_for_vis_conf \
- --validate_at_start --add_huber_loss
-```
-
-### Fine-tuning with pseudo labels
-In order to launch training with pseudo-labelling, you need to collect your own dataset of real videos. There is a sample class available in [`cotracker/datasets/real_dataset.py`](./cotracker/datasets/real_dataset.py) with keyword-based filtering that we used for training. Your class should implement loading a video and storing it in the `CoTrackerData` class as a field, while pseudo labels will be generated in `train_on_real_data.py`.
-
-You should have an existing Kubric-trained model for fine-tuning with pseudo labels. Here is an example of how you can launch fine-tuning of the online model:
-```bash
-python ./train_on_real_data.py --batch_size 1 --num_steps 15000 \
- --ckpt_path ./ --model_name cotracker_three --save_freq 200 --sequence_len 64 \
- --eval_datasets tapvid_stacking tapvid_davis_first --traj_per_sample 384 \
- --save_every_n_epoch 15 --evaluate_every_n_epoch 15 --model_stride 4 \
- --dataset_root ${path_to_your_dataset} --num_nodes 4 --real_data_splits 0 \
- --num_virtual_tracks 64 --mixed_precision --random_frame_rate \
- --restore_ckpt ./checkpoints/baseline_online.pth \
- --lr 0.00005 --real_data_filter_sift --validate_at_start \
- --sliding_window_len 16 --limit_samples 15000
+## Структура
 
 ```
-And the offline model:
-```bash
-python train_on_real_data.py --batch_size 1 --num_steps 15000 \
- --ckpt_path ./ --model_name cotracker_three --save_freq 200 --sequence_len 80 \
- --eval_datasets tapvid_stacking tapvid_davis_first --traj_per_sample 384 --save_every_n_epoch 15 \
- --evaluate_every_n_epoch 15 --model_stride 4 --dataset_root ${path_to_your_dataset} \
-  --num_nodes 4 --real_data_splits 0 --num_virtual_tracks 64 --mixed_precision \
-  --random_frame_rate --restore_ckpt ./checkpoints/baseline_offline.pth --lr 0.00005 \
-  --real_data_filter_sift --validate_at_start --offline_model --limit_samples 15000
+co-tracker/
+├── run.sh, run.ps1          точки входа (bash и PowerShell)
+├── Dockerfile               стадии: weights → base → app → test / runtime
+├── requirements.txt         CPU: torch 2.4.1+cpu
+├── requirements-gpu.txt     GPU: torch 2.4.1+cu121
+├── requirements-common.txt  общие зависимости, все версии зафиксированы
+├── requirements-test.txt    pytest
+├── pytest.ini
+├── scripts/
+│   ├── run_demo.py          видео → треки → mp4 / gif / png / npy / json
+│   ├── download_weights.py  скачивание весов при сборке с проверкой sha256
+│   └── make_reference.py    создание эталона reference/
+├── tests/
+│   ├── test_*.py            тесты (13 штук вместе с параметризацией)
+│   ├── test_bilinear_sample.py  тест авторов, не изменён
+│   ├── conftest.py          общая модель на сессию, итоговая таблица
+│   ├── helpers.py           вызов модели и картинки
+│   ├── synthetic.py         генератор синтетических видео с истинными треками
+│   └── data/                apple.mp4, shapes.mp4, pan_zoom.mp4 и их треки
+├── reference/               эталонные треки apple.mp4 (см. reference/README.md)
+├── checkpoints/             пустая; сюда можно положить веса вручную
+├── media/                   картинки для этого README
+├── results/                 создаётся при запуске, в git не попадает
+├── cotracker/, demo.py, ... код авторов без изменений
+└── README_ORIGINAL.md       исходный README авторов
 ```
 
+После запуска тестов:
 
-
-## Development
-
-### Building the documentation
-
-To build CoTracker documentation, first install the dependencies:
-
-```bash
-pip install sphinx
-pip install sphinxcontrib-bibtex
+```
+results/tests/
+├── e2e_apple/        tracks.mp4, preview.gif, summary.png, tracks.npy, visibility.npy, summary.json
+├── e2e_shapes/       tracks.mp4, preview.gif, gt_vs_pred.png
+├── e2e_pan_zoom/     tracks.mp4, preview.gif, gt_vs_pred.png
+├── shift_dx3_dy2.png, shift_dx-2_dy4.png, static_video.png, occlusion.png
+├── outputs_grid.png, reference_compare.png
+├── model_info.json, author_test_bilinear_sample.log
+└── report.json       все метрики и статусы тестов
 ```
 
-Then you can use this command to generate the documentation in the `docs/_build/html` folder:
+## Пересборка и изменения
 
-```bash
-make -C docs html
-```
+- Изменили код в `scripts/`, `tests/` или `cotracker/` — `bash run.sh --rebuild`.
+- Полная пересборка без кэша Docker:
+  `docker build --no-cache --target test -t cotracker3:test .`
+- Обновили версии библиотек — пересоздайте эталон: `bash run.sh --make-reference`.
+- Свой чекпоинт или нет доступа к Hugging Face — положите `scaled_offline.pth` в
+  `checkpoints/` (см. [checkpoints/README.md](checkpoints/README.md)) и пересоберите.
 
+Образ без pytest для одного демо: `docker build --target runtime -t cotracker3:runtime .`,
+затем `docker run --rm --network none -v "$(pwd)/results:/app/results" cotracker3:runtime`.
 
-## Previous versions
-### CoTracker v2
-You could use CoTracker v2 with torch.hub in both offline and online modes.
-#### Offline mode: 
-```pip install imageio[ffmpeg]```, then:
-```python
-import torch
-# Download the video
-url = 'https://github.com/facebookresearch/co-tracker/blob/main/assets/apple.mp4'
+## Что изменено относительно репозитория авторов
 
-import imageio.v3 as iio
-frames = iio.imread(url, plugin="FFMPEG")  # plugin="pyav"
+Код авторов (`cotracker/`, `demo.py`, `tests/test_bilinear_sample.py` и т.д.) не менялся.
+Добавлены Docker-обвязка, скрипты, тесты и данные; исходный `README.md` переименован в
+`README_ORIGINAL.md`. Особенности кода авторов, которые пришлось обойти снаружи:
 
-device = 'cuda'
-grid_size = 10
-video = torch.tensor(frames).permute(0, 3, 1, 2)[None].float().to(device)  # B T C H W
-
-# Run Offline CoTracker:
-cotracker = torch.hub.load("facebookresearch/co-tracker", "cotracker2").to(device)
-pred_tracks, pred_visibility = cotracker(video, grid_size=grid_size) # B T N 2,  B T N 1
-```
-#### Online mode: 
-```python
-cotracker = torch.hub.load("facebookresearch/co-tracker", "cotracker2_online").to(device)
-
-# Run Online CoTracker, the same model with a different API:
-# Initialize online processing
-cotracker(video_chunk=video, is_first_step=True, grid_size=grid_size)  
-
-# Process the video
-for ind in range(0, video.shape[1] - cotracker.step, cotracker.step):
-    pred_tracks, pred_visibility = cotracker(
-        video_chunk=video[:, ind : ind + cotracker.step * 2]
-    )  # B T N 2,  B T N 1
-```
-
-Checkpoint for v2 could be downloaded with the following command:
-```bash
-wget https://huggingface.co/facebook/cotracker/resolve/main/cotracker2.pth
-```
-
-### CoTracker v1
-It is directly available via pytorch hub:
-```python
-import torch
-import einops
-import timm
-import tqdm
-
-cotracker = torch.hub.load("facebookresearch/co-tracker:v1.0", "cotracker_w8")
-```
-The old version of the code is available [here](https://github.com/facebookresearch/co-tracker/tree/8d364031971f6b3efec945dd15c468a183e58212).
-You can also download the corresponding checkpoints:
-```bash
-wget https://dl.fbaipublicfiles.com/cotracker/cotracker_stride_4_wind_8.pth
-wget https://dl.fbaipublicfiles.com/cotracker/cotracker_stride_4_wind_12.pth
-wget https://dl.fbaipublicfiles.com/cotracker/cotracker_stride_8_wind_16.pth
-```
-
-## License
-
-The majority of CoTracker is licensed under CC-BY-NC, however portions of the project are available under separate license terms: Particle Video Revisited is licensed under the MIT license, TAP-Vid and LocoTrack are licensed under the Apache 2.0 license.
-
-## Acknowledgments
-
-We would like to thank [PIPs](https://github.com/aharley/pips), [TAP-Vid](https://github.com/deepmind/tapnet), [LocoTrack](https://github.com/cvlab-kaist/locotrack) for publicly releasing their code and data. We also want to thank [Luke Melas-Kyriazi](https://lukemelas.github.io/) for proofreading the paper, [Jianyuan Wang](https://jytime.github.io/), [Roman Shapovalov](https://shapovalov.ro/) and [Adam W. Harley](https://adamharley.com/) for the insightful discussions.
-
-## Citing CoTracker
-
-If you find our repository useful, please consider giving it a star ⭐ and citing our research papers in your work:
-```bibtex
-@inproceedings{karaev23cotracker,
-  title     = {CoTracker: It is Better to Track Together},
-  author    = {Nikita Karaev and Ignacio Rocco and Benjamin Graham and Natalia Neverova and Andrea Vedaldi and Christian Rupprecht},
-  booktitle = {Proc. {ECCV}},
-  year      = {2024}
-}
-```
-```bibtex
-@inproceedings{karaev24cotracker3,
-  title     = {CoTracker3: Simpler and Better Point Tracking by Pseudo-Labelling Real Videos},
-  author    = {Nikita Karaev and Iurii Makarov and Jianyuan Wang and Natalia Neverova and Andrea Vedaldi and Christian Rupprecht},
-  booktitle = {Proc. {arXiv:2410.11831}},
-  year      = {2024}
-}
-```
+- `Visualizer.save_video` теряет 3 кадра и дублирует первый — mp4 пишется своим кодом;
+- `CoTrackerPredictor` не передаёт модели `fmaps_chunk_size`, и признаки всех кадров
+  считаются разом — параметр подставляется через `functools.partial`, пиковая память
+  на `apple.mp4` падает с 5.4 до 2.3 ГБ при побитово одинаковых треках;
+- `cm.get_cmap` в Visualizer удалён в matplotlib 3.9 — зафиксирован matplotlib 3.8.4;
+- `tests/test_bilinear_sample.py` вызывает `unittest.main()` при импорте — запускается
+  отдельным процессом.
