@@ -6,6 +6,7 @@
 !reference/
 !checkpoints/
 !assets/apple.mp4
+!assets/apple_mask.png
 !requirements.txt
 !requirements-gpu.txt
 !requirements-common.txt

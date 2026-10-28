@@ -79,9 +79,27 @@ $RunArgs = @("run", "--rm", "--network", "none", "--platform", "linux/amd64") + 
 if ($Demo) {
     if (-not (Test-Path -LiteralPath $Demo -PathType Leaf)) { Write-Host "error: video not found: $Demo"; exit 2 }
     $video = Get-Item -LiteralPath $Demo
+    $MaskArgs = @()
+    $DemoArgs = @()
+    $j = 0
+    while ($j -lt $Extra.Count) {
+        if ($Extra[$j] -eq '--mask' -and $j + 1 -lt $Extra.Count) {
+            if (-not (Test-Path -LiteralPath $Extra[$j + 1] -PathType Leaf)) {
+                Write-Host "error: mask not found: $($Extra[$j + 1])"; exit 2
+            }
+            $mask = Get-Item -LiteralPath $Extra[$j + 1]
+            $MaskArgs = @("-v", "$($mask.DirectoryName):/mask:ro")
+            $DemoArgs += @("--mask", "/mask/$($mask.Name)")
+            $j += 2
+        }
+        else {
+            $DemoArgs += $Extra[$j]
+            $j++
+        }
+    }
     Write-Host "[2/3] Running demo on $Demo (offline)"
-    & docker @RunArgs -v "$($video.DirectoryName):/input:ro" $Tag `
-        python scripts/run_demo.py --video "/input/$($video.Name)" @Extra
+    & docker @RunArgs -v "$($video.DirectoryName):/input:ro" @MaskArgs $Tag `
+        python scripts/run_demo.py --video "/input/$($video.Name)" @DemoArgs
     $rc = $LASTEXITCODE
     $Out = Join-Path "results\demo" $video.BaseName
     $DoneMsg = "DEMO DONE!"

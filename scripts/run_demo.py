@@ -16,11 +16,13 @@ import numpy as np
 import torch
 from PIL import Image
 
+from cotracker.models.core.model_utils import get_points_on_a_grid
 from cotracker.predictor import CoTrackerPredictor
 from cotracker.utils.visualizer import Visualizer
 
 DEFAULT_CHECKPOINT = os.environ.get("COTRACKER_CHECKPOINT", "./checkpoints/scaled_offline.pth")
 DEFAULT_RESULTS = os.environ.get("RESULTS_DIR", "./results")
+BACKGROUND_GRID = 10
 
 
 def log(msg):
@@ -98,15 +100,57 @@ def read_video(path, max_frames=0, resize=0):
     return np.stack(frames), fps, source_size
 
 
-def track(model, frames, grid_size=10, device="cpu"):
+def read_mask(path, size):
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"mask not found: {path}")
+    mask = Image.open(path).convert("L")
+    if mask.size != size:
+        mask = mask.resize(size, Image.NEAREST)
+    mask = np.asarray(mask) > 127
+    if not mask.any():
+        raise ValueError(f"mask is empty: {path}")
+    return mask
+
+
+def mask_queries(mask, grid_size, background_grid=0):
+    H, W = mask.shape
+
+    def select(points, value):
+        px = points[:, 0].round().astype(int).clip(0, W - 1)
+        py = points[:, 1].round().astype(int).clip(0, H - 1)
+        return points[mask[py, px] == value]
+
+    ys, xs = np.nonzero(mask)
+    extent = (ys.max() - ys.min() + 1, xs.max() - xs.min() + 1)
+    center = ((ys.min() + ys.max()) / 2, (xs.min() + xs.max()) / 2)
+    grid = get_points_on_a_grid(grid_size, extent, center=center)[0].numpy()
+    foreground = select(grid, True)
+    if len(foreground) == 0:
+        raise ValueError("no grid points inside the mask, increase --grid_size")
+    background = np.zeros((0, 2), np.float32)
+    if background_grid:
+        background = select(get_points_on_a_grid(background_grid, (H, W))[0].numpy(), False)
+    return foreground, background
+
+
+def track(model, frames, grid_size=10, device="cpu", queries=None):
     video = torch.from_numpy(frames).permute(0, 3, 1, 2)[None].float().to(device)
-    tracks, visibility = model(video, grid_size=grid_size)
+    if queries is None:
+        tracks, visibility = model(video, grid_size=grid_size)
+    else:
+        q = np.concatenate([np.zeros((len(queries), 1)), queries], axis=1)
+        tracks, visibility = model(video, queries=torch.from_numpy(q).float()[None].to(device))
     return tracks[0].cpu().numpy().astype(np.float32), visibility[0].cpu().numpy().astype(bool)
 
 
-def render_tracks_video(frames, tracks, visibility, trace=15, linewidth=2):
+def render_tracks_video(frames, tracks, visibility, trace=15, linewidth=2, segm_mask=None,
+                        compensate=False):
     vis = Visualizer(pad_value=0, linewidth=linewidth, show_first_frame=0,
                      tracks_leave_trace=trace)
+    extra = {}
+    if segm_mask is not None:
+        extra = {"segm_mask": torch.from_numpy(segm_mask)[None, None].float(),
+                 "compensate_for_camera_motion": compensate}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         out = vis.visualize(
@@ -114,6 +158,7 @@ def render_tracks_video(frames, tracks, visibility, trace=15, linewidth=2):
             torch.from_numpy(tracks)[None],
             torch.from_numpy(visibility)[None],
             save_video=False,
+            **extra,
         )
     return out[0].permute(0, 2, 3, 1).numpy()
 
@@ -141,8 +186,9 @@ def write_gif(path, frames, fps, width=400, max_frames=60, colors=64):
                    duration=int(round(1000 * step / fps)), optimize=True)
 
 
-def write_summary_png(path, frames, tracks, visibility):
+def write_summary_png(path, frames, tracks, visibility, trajectories=None):
     T, N = visibility.shape
+    lines = tracks if trajectories is None else trajectories
     h, w = frames.shape[1:3]
     y0 = tracks[0, :, 1]
     colors = plt.get_cmap("gist_rainbow")((y0 - y0.min()) / max(np.ptp(y0), 1e-6))
@@ -155,7 +201,7 @@ def write_summary_png(path, frames, tracks, visibility):
     axes[0].set_title(f"Кадр 1 из {T}: {N} точек запроса")
 
     axes[1].imshow(frames[-1])
-    visible_xy = np.where(visibility[..., None], tracks, np.nan)
+    visible_xy = np.where(visibility[..., None], lines, np.nan)
     for n in range(N):
         axes[1].plot(visible_xy[:, n, 0], visible_xy[:, n, 1], color=colors[n],
                      linewidth=1.3, alpha=0.9)
@@ -164,7 +210,8 @@ def write_summary_png(path, frames, tracks, visibility):
                     c=colors[last_vis], edgecolors="black", linewidths=0.6)
     axes[1].scatter(tracks[-1, ~last_vis, 0], tracks[-1, ~last_vis, 1], s=30,
                     facecolors="none", edgecolors=colors[~last_vis], linewidths=1.5)
-    axes[1].set_title(f"Кадр {T} из {T}: траектории (видимы {last_vis.sum()} из {N})")
+    note = "" if trajectories is None else ", движение камеры вычтено"
+    axes[1].set_title(f"Кадр {T} из {T}: траектории (видимы {last_vis.sum()} из {N}{note})")
 
     for ax in axes:
         ax.set_xlim(0, w - 1)
@@ -177,7 +224,9 @@ def write_summary_png(path, frames, tracks, visibility):
 
 def run(video_path, out_dir=None, grid_size=10, max_frames=0, resize=0,
         checkpoint=DEFAULT_CHECKPOINT, device="auto", threads=0, trace=15,
-        gif_width=400, fmaps_chunk_size=8, model=None):
+        gif_width=400, fmaps_chunk_size=8, mask=None, compensate=False, model=None):
+    if compensate and mask is None:
+        raise ValueError("--compensate needs --mask")
     t_start = time.time()
     device = pick_device(device)
     threads = setup_threads(threads)
@@ -196,15 +245,35 @@ def run(video_path, out_dir=None, grid_size=10, max_frames=0, resize=0,
         model = load_model(checkpoint, device, fmaps_chunk_size)
     load_seconds = time.time() - t0
 
-    log(f"[3/5] Tracking a {grid_size}x{grid_size} grid of points")
+    segm_mask, queries, n_background = None, None, 0
+    if mask:
+        segm_mask = read_mask(mask, (W, H))
+        foreground, background = mask_queries(segm_mask, grid_size,
+                                              BACKGROUND_GRID if compensate else 0)
+        queries, n_background = np.concatenate([foreground, background]), len(background)
+        if compensate and n_background == 0:
+            raise ValueError("--compensate needs background outside the mask")
+        log(f"[3/5] Tracking a {grid_size}x{grid_size} grid on the mask {mask}: "
+            f"{len(foreground)} object + {n_background} background points")
+    else:
+        log(f"[3/5] Tracking a {grid_size}x{grid_size} grid of points")
     t0 = time.time()
-    tracks, visibility = track(model, frames, grid_size, device)
+    all_tracks, all_visibility = track(model, frames, grid_size, device, queries)
     infer_seconds = time.time() - t0
+    n_object = all_tracks.shape[1] - n_background
+    tracks, visibility = all_tracks[:, :n_object], all_visibility[:, :n_object]
     log(f"      tracks {tracks.shape}, visibility {visibility.shape}, {infer_seconds:.1f} s")
 
     log("[4/5] Rendering mp4 / gif / png")
     t0 = time.time()
-    rendered = render_tracks_video(frames, tracks, visibility, trace=trace)
+    trajectories = None
+    if compensate:
+        rendered = render_tracks_video(frames, all_tracks, all_visibility, trace=trace,
+                                       segm_mask=segm_mask, compensate=True)
+        camera = all_tracks[:, n_object:].mean(axis=1)
+        trajectories = tracks - (camera - camera[-1])[:, None]
+    else:
+        rendered = render_tracks_video(frames, tracks, visibility, trace=trace)
     paths = {
         "video": os.path.join(out_dir, "tracks.mp4"),
         "gif": os.path.join(out_dir, "preview.gif"),
@@ -215,7 +284,7 @@ def run(video_path, out_dir=None, grid_size=10, max_frames=0, resize=0,
     }
     write_mp4(paths["video"], rendered, fps)
     write_gif(paths["gif"], rendered, fps, width=gif_width)
-    write_summary_png(paths["png"], frames, tracks, visibility)
+    write_summary_png(paths["png"], frames, tracks, visibility, trajectories)
     render_seconds = time.time() - t0
 
     log("[5/5] Saving arrays and summary.json")
@@ -230,7 +299,10 @@ def run(video_path, out_dir=None, grid_size=10, max_frames=0, resize=0,
         "fps": fps,
         "num_frames": T,
         "grid_size": grid_size,
+        "mask": mask,
+        "compensate_camera_motion": compensate,
         "num_points": int(tracks.shape[1]),
+        "background_points": n_background,
         "visible_fraction": round(float(visibility.mean()), 4),
         "visible_fraction_last_frame": round(float(visibility[-1].mean()), 4),
         "mean_displacement_px": round(float(displacement[vis_pts].mean()), 2) if vis_pts.any() else None,
@@ -258,7 +330,8 @@ def run(video_path, out_dir=None, grid_size=10, max_frames=0, resize=0,
 def main():
     parser = argparse.ArgumentParser(description="CoTracker3 demo: video -> tracks -> mp4/gif/png/npy/json")
     parser.add_argument("--video", default="assets/apple.mp4", help="путь к видео")
-    parser.add_argument("--grid_size", type=int, default=10, help="сетка G x G точек на первом кадре")
+    parser.add_argument("--grid_size", type=int, default=10,
+                        help="сетка G x G точек на первом кадре (с --mask — на области объекта)")
     parser.add_argument("--max_frames", type=int, default=0, help="взять первые N кадров (0 — все)")
     parser.add_argument("--resize", type=int, default=0, help="высота кадра в пикселях (0 — исходная)")
     parser.add_argument("--out", default=None, help="папка результатов (по умолчанию $RESULTS_DIR/demo/<имя>)")
@@ -269,10 +342,16 @@ def main():
     parser.add_argument("--gif_width", type=int, default=400)
     parser.add_argument("--fmaps_chunk", type=int, default=8,
                         help="кадров за проход энкодера признаков (меньше — меньше память)")
+    parser.add_argument("--mask", default=None,
+                        help="маска объекта (PNG, объект белый): сетка ставится только на объект")
+    parser.add_argument("--compensate", action="store_true",
+                        help="вычесть движение камеры из хвостов треков (нужна --mask)")
     args = parser.parse_args()
+    if args.compensate and not args.mask:
+        parser.error("--compensate needs --mask")
     run(args.video, args.out, args.grid_size, args.max_frames, args.resize,
         args.checkpoint, args.device, args.threads, args.trace, args.gif_width,
-        args.fmaps_chunk)
+        args.fmaps_chunk, mask=args.mask, compensate=args.compensate)
 
 
 if __name__ == "__main__":

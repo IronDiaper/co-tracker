@@ -34,7 +34,7 @@ FROM base AS app
 COPY --from=weights /weights/scaled_offline.pth /app/checkpoints/scaled_offline.pth
 ENV COTRACKER_CHECKPOINT=/app/checkpoints/scaled_offline.pth \
     RESULTS_DIR=/app/results
-COPY assets/apple.mp4 ./assets/apple.mp4
+COPY assets/apple.mp4 assets/apple_mask.png ./assets/
 COPY scripts ./scripts
 RUN mkdir -p /app/results && chmod 777 /app/results
 
