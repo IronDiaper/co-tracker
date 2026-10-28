@@ -76,9 +76,25 @@ RUN_ARGS=(run --rm --network none "${PLATFORM_ARGS[@]}"
 if [ -n "$DEMO" ]; then
   [ -f "$DEMO" ] || { echo "error: video not found: $DEMO" >&2; exit 2; }
   name="$(basename "$DEMO")"
+  MASK_ARGS=()
+  DEMO_ARGS=()
+  i=0
+  while [ "$i" -lt "${#EXTRA[@]}" ]; do
+    if [ "${EXTRA[$i]}" = "--mask" ] && [ $((i + 1)) -lt "${#EXTRA[@]}" ]; then
+      mask="${EXTRA[$((i + 1))]}"
+      [ -f "$mask" ] || { echo "error: mask not found: $mask" >&2; exit 2; }
+      MASK_ARGS=(-v "$(host_path "$(dirname "$mask")"):/mask:ro")
+      DEMO_ARGS+=(--mask "/mask/$(basename "$mask")")
+      i=$((i + 2))
+    else
+      DEMO_ARGS+=("${EXTRA[$i]}")
+      i=$((i + 1))
+    fi
+  done
   echo "[2/3] Running demo on $DEMO (offline)"
-  docker "${RUN_ARGS[@]}" -v "$(host_path "$(dirname "$DEMO")"):/input:ro" "$TAG" \
-    python scripts/run_demo.py --video "/input/$name" ${EXTRA[@]+"${EXTRA[@]}"}
+  docker "${RUN_ARGS[@]}" -v "$(host_path "$(dirname "$DEMO")"):/input:ro" \
+    ${MASK_ARGS[@]+"${MASK_ARGS[@]}"} "$TAG" \
+    python scripts/run_demo.py --video "/input/$name" ${DEMO_ARGS[@]+"${DEMO_ARGS[@]}"}
   rc=$?
   out="results/demo/${name%.*}"
   DONE_MSG="DEMO DONE!"
